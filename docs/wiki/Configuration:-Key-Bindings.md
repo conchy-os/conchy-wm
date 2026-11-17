@@ -130,6 +130,33 @@ Mouse clicks operate on the window that was focused at the time of the click, no
 
 Note that binding `Mod+MouseLeft` or `Mod+MouseRight` will override the corresponding gesture (moving or resizing the window).
 
+### Modifier Tap Bindings
+
+A modifier written on its own is a *tap*: the bind runs when you press and release the modifier without touching anything else in between.
+Pressing a key, a mouse button or the wheel while it is held cancels the tap, so `Super+T`, `Super+drag` and the like keep working.
+
+```kdl
+binds {
+    // Tap Super to open the shell's launcher.
+    Super allow-inhibiting=false { spawn "conchy-shell" "toggle-launcher"; }
+}
+```
+
+Use `Mod` instead of `Super` to follow the compositor modifier, and combine modifiers (`Ctrl+Alt`) for a tap of the chord.
+The release is still passed on to the focused window, so it doesn't think the modifier is stuck.
+
+### Binds and Fullscreen Windows
+
+Binds run while a fullscreen window has focus.
+Set `allow-when-fullscreen=false` on a bind that should go to the fullscreen window instead.
+To make a bind work even where an application has [inhibited shortcuts](#toggle-keyboard-shortcuts-inhibit), set `allow-inhibiting=false`.
+
+```kdl
+binds {
+    Super allow-when-fullscreen=false { spawn "conchy-shell" "toggle-launcher"; }
+}
+```
+
 ### Custom Hotkey Overlay Titles
 
 <sup>Since: 25.02</sup>

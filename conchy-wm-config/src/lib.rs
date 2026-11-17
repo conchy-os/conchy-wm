@@ -131,6 +131,8 @@ struct IncludeErrors(Vec<knuffel::Error>);
 // We don't *need* it because we have a recursion limit, but it makes for nicer error messages.
 struct IncludeStack(HashSet<PathBuf>);
 struct SawMruBinds(Rc<Cell<bool>>);
+// Set while parsing `shortcuts.kdl`: its `binds` replace the ones from the main config.
+struct ReplaceBinds(bool);
 
 // Rather than listing all fields and deriving knuffel::Decode, we implement
 // knuffel::DecodeChildren by hand, since we need custom logic for every field anyway: we want to
@@ -230,6 +232,10 @@ where
                     // your own.
                     let mut config = config.borrow_mut();
                     let binds = &mut config.binds.0;
+                    if ctx.get::<ReplaceBinds>().is_some_and(|r| r.0) {
+                        // shortcuts.kdl is the whole truth once it has a `binds` block.
+                        binds.clear();
+                    }
                     // Remove existing binds matching any new bind.
                     binds.retain(|bind| !part.0.iter().any(|new| new.key == bind.key));
                     // Add all new binds.
@@ -479,7 +485,13 @@ impl Config {
             }
         };
 
-        Self::parse(path, &contents).map_config_res(|res| {
+        let ConfigParseResult {
+            config,
+            mut includes,
+        } = Self::parse(path, &contents);
+        let config = config.and_then(|config| Self::apply_shortcuts(config, path, &mut includes));
+
+        ConfigParseResult { config, includes }.map_config_res(|res| {
             let config = res.context("error parsing")?;
             debug!("loaded config from {path:?}");
             Ok(config)
@@ -523,6 +535,66 @@ impl Config {
             });
 
         ConfigParseResult { config, includes }
+    }
+
+    /// Name of the file next to the main config that the shell's shortcut editor writes.
+    pub const SHORTCUTS_FILE: &'static str = "shortcuts.kdl";
+
+    /// Applies `shortcuts.kdl`, if it sits next to `main_path`, on top of `config`.
+    ///
+    /// The file is an implicit last include. A `binds` block in it replaces the binds of
+    /// the main config rather than merging into them, so the editor can remove a bind by
+    /// leaving it out. The path is added to `includes` even when it doesn't exist yet, so
+    /// that creating it triggers a reload.
+    fn apply_shortcuts(
+        config: Config,
+        main_path: &Path,
+        includes: &mut Vec<PathBuf>,
+    ) -> Result<Config, ConfigIncludeError> {
+        let base = main_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let path = base.join(Self::SHORTCUTS_FILE);
+        if path == main_path || includes.contains(&path) {
+            return Ok(config);
+        }
+        includes.push(path.clone());
+
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Ok(config);
+        };
+        debug!("loading shortcuts from {path:?}");
+
+        let config = Rc::new(RefCell::new(config));
+        let part_includes = Rc::new(RefCell::new(Includes(Vec::new())));
+        let include_errors = Rc::new(RefCell::new(IncludeErrors(Vec::new())));
+        let include_stack = HashSet::from([main_path.to_path_buf(), path.clone()]);
+
+        let part = knuffel::parse_with_context::<ConfigPart, knuffel::span::Span, _>(
+            Self::SHORTCUTS_FILE,
+            &text,
+            |ctx| {
+                ctx.set(BasePath(base.clone()));
+                ctx.set(RootBase(base));
+                ctx.set(Recursion(1));
+                ctx.set(part_includes.clone());
+                ctx.set(include_errors.clone());
+                ctx.set(IncludeStack(include_stack));
+                ctx.set(SawMruBinds(Rc::new(Cell::new(false))));
+                ctx.set(ReplaceBinds(true));
+                ctx.set(config.clone());
+            },
+        );
+
+        includes.extend(part_includes.take().0);
+        match part {
+            Ok(_) => Ok(config.take()),
+            Err(main) => Err(ConfigIncludeError {
+                main,
+                includes: include_errors.take().0,
+            }),
+        }
     }
 
     pub fn parse_mem(text: &str) -> Result<Self, ConfigIncludeError> {
@@ -629,6 +701,98 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn tap_bind_and_fullscreen_property() {
+        let config = Config::parse_mem(
+            r#"
+            binds {
+                Super allow-when-fullscreen=false { spawn "launcher"; }
+                Mod+Q { close-window; }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let tap = &config.binds.0[0];
+        assert_eq!(tap.key.trigger, Trigger::ModifierTap);
+        assert_eq!(tap.key.modifiers, Modifiers::SUPER);
+        assert!(!tap.allow_when_fullscreen);
+        assert!(config.binds.0[1].allow_when_fullscreen);
+    }
+
+    #[test]
+    fn shortcuts_file_replaces_binds() {
+        let dir = std::env::temp_dir().join(format!("conchy-shortcuts-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("wm.kdl");
+        fs::write(
+            &main,
+            r#"binds {
+                Mod+Q { close-window; }
+                Mod+T { spawn "term"; }
+            }"#,
+        )
+        .unwrap();
+
+        // No shortcuts file: the main binds stand, and the file is still watched.
+        let res = Config::load(&main);
+        assert_eq!(res.config.unwrap().binds.0.len(), 2);
+        assert!(res.includes.contains(&dir.join("shortcuts.kdl")));
+
+        // With one, its binds are all there is.
+        fs::write(
+            dir.join("shortcuts.kdl"),
+            r#"binds {
+                Super { spawn "launcher"; }
+            }"#,
+        )
+        .unwrap();
+        let config = Config::load(&main).config.unwrap();
+        assert_eq!(config.binds.0.len(), 1);
+        assert_eq!(config.binds.0[0].key.trigger, Trigger::ModifierTap);
+
+        // A broken shortcuts file fails the load rather than silently dropping binds.
+        fs::write(dir.join("shortcuts.kdl"), "binds { Nonsense+ }").unwrap();
+        assert!(Config::load(&main).config.is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_shortcuts_as_the_shell_writes_them() {
+        // Verbatim output of conchy-shell's shortcut editor (shortcuts.rs).
+        let config = Config::parse_mem(
+            r#"
+binds {
+    Super allow-inhibiting=false {
+        spawn "conchy-shell" "toggle-launcher"
+    }
+    Mod+Q repeat=false {
+        close-window
+    }
+    Mod+Shift+Return {
+        spawn "alacritty" "-e" "fish"
+    }
+    Mod+1 {
+        focus-workspace 1
+    }
+    Ctrl+Alt allow-when-fullscreen=false {
+        spawn "conchy-shell" "toggle-launcher"
+    }
+}
+// trailing comment
+"#,
+        )
+        .unwrap();
+
+        let binds = &config.binds.0;
+        assert_eq!(binds.len(), 5);
+        assert_eq!(binds[0].key.trigger, Trigger::ModifierTap);
+        assert!(!binds[0].allow_inhibiting);
+        assert_eq!(binds[4].key.modifiers, Modifiers::CTRL | Modifiers::ALT);
+        assert!(!binds[4].allow_when_fullscreen);
+    }
 
     #[test]
     fn can_create_default_config() {
@@ -2041,6 +2205,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: Some(
                             Some(
                                 "Inhibit",
@@ -2061,6 +2226,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2081,6 +2247,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: true,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2097,6 +2264,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: Some(
                             None,
                         ),
@@ -2115,6 +2283,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2133,6 +2302,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2149,6 +2319,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2167,6 +2338,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2185,6 +2357,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2201,6 +2374,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2221,6 +2395,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2241,6 +2416,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2259,6 +2435,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2275,6 +2452,7 @@ mod tests {
                         ),
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2293,6 +2471,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: true,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                 ],
@@ -2423,6 +2602,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2445,6 +2625,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2469,6 +2650,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        allow_when_fullscreen: true,
                         hotkey_overlay_title: None,
                     },
                 ],

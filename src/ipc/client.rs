@@ -4,12 +4,12 @@ use std::path::Path;
 use std::{env, slice};
 
 use anyhow::{anyhow, bail, Context};
-use conchy_wm_config::OutputName;
 use conchy_ipc::socket::Socket;
 use conchy_ipc::{
     Action, Cast, CastKind, CastTarget, Event, KeyboardLayouts, LogicalOutput, Mode, Output,
     OutputConfigChanged, Overview, Request, Response, Transform, Window, WindowLayout,
 };
+use conchy_wm_config::OutputName;
 use serde_json::json;
 
 use crate::cli::Msg;
@@ -105,7 +105,9 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
         Some(Ok(Response::Version(compositor_version))) => {
             let cli_version = version();
             if cli_version != compositor_version {
-                eprintln!("Running conchy-wm compositor has a different version from the conchy-wm CLI:");
+                eprintln!(
+                    "Running conchy-wm compositor has a different version from the conchy-wm CLI:"
+                );
                 eprintln!("Compositor version: {compositor_version}");
                 eprintln!("CLI version:        {cli_version}");
                 eprintln!("Did you forget to restart conchy-wm after an update?");
@@ -124,7 +126,8 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
     }
 
     let reply = result.context("error communicating with conchy-wm")?;
-    let response = reply.map_err(|err_msg| anyhow!(err_msg).context("conchy-wm returned an error"))?;
+    let response =
+        reply.map_err(|err_msg| anyhow!(err_msg).context("conchy-wm returned an error"))?;
 
     match msg {
         Msg::RequestError => {
@@ -149,7 +152,9 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
             }
 
             if cli_version != compositor_version {
-                eprintln!("Running conchy-wm compositor has a different version from the conchy-wm CLI.");
+                eprintln!(
+                    "Running conchy-wm compositor has a different version from the conchy-wm CLI."
+                );
                 eprintln!("Did you forget to restart conchy-wm after an update?");
                 eprintln!();
             }

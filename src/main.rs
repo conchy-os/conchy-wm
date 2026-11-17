@@ -16,6 +16,8 @@ use calloop::EventLoop;
 use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use clap_complete_nushell::Nushell;
+use conchy_ipc::socket::SOCKET_PATH_ENV;
+use conchy_wm_config::{Config, ConfigPath};
 use directories::ProjectDirs;
 use niri::cli::{Cli, CompletionShell, Sub};
 #[cfg(feature = "dbus")]
@@ -27,14 +29,13 @@ use niri::utils::spawning::{
     REMOVE_ENV_RUST_BACKTRACE, REMOVE_ENV_RUST_LIB_BACKTRACE,
 };
 use niri::utils::{cause_panic, version, watcher, xwayland, IS_SYSTEMD_SERVICE};
-use conchy_wm_config::{Config, ConfigPath};
-use conchy_ipc::socket::SOCKET_PATH_ENV;
 #[cfg(feature = "systemd")]
 use sd_notify::NotifyState;
 use smithay::reexports::wayland_server::Display;
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_LOG_FILTER: &str = "conchy_wm=debug,niri=debug,smithay::backend::renderer::gles=error";
+const DEFAULT_LOG_FILTER: &str =
+    "conchy_wm=debug,niri=debug,smithay::backend::renderer::gles=error";
 
 #[cfg(feature = "profile-with-tracy-allocations")]
 #[global_allocator]

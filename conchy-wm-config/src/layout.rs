@@ -1,5 +1,5 @@
-use knuffel::errors::DecodeError;
 use conchy_ipc::{ColumnDisplay, SizeChange};
+use knuffel::errors::DecodeError;
 
 use crate::appearance::{
     Border, FocusRing, InsertHint, Shadow, TabIndicator, DEFAULT_BACKGROUND_COLOR,

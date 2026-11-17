@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use anyhow::Context as _;
-use glam::{Mat3, Vec2};
 use conchy_wm_config::BlockOutFrom;
+use glam::{Mat3, Vec2};
 use smithay::backend::renderer::element::utils::{
     Relocate, RelocateRenderElement, RescaleRenderElement,
 };

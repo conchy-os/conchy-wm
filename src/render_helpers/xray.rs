@@ -2,8 +2,8 @@ use std::array;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use glam::{Mat3, Vec2};
 use conchy_wm_config::CornerRadius;
+use glam::{Mat3, Vec2};
 use smithay::backend::renderer::element::{Element, Id, RenderElement};
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, Uniform};
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};

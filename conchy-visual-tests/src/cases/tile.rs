@@ -1,10 +1,10 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use conchy_wm_config::Color;
 use niri::layout::Options;
 use niri::render_helpers::xray::XrayPos;
 use niri::render_helpers::{RenderCtx, RenderTarget};
-use conchy_wm_config::Color;
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Physical, Point, Rectangle, Size};

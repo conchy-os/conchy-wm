@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
-use glam::{Mat3, Vec2};
 use conchy_wm_config::CornerRadius;
+use glam::{Mat3, Vec2};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::{Element, Id, RenderElement};
 use smithay::backend::renderer::gles::{

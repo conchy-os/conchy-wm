@@ -2,9 +2,9 @@ use core::f64;
 use std::cell::OnceCell;
 use std::rc::Rc;
 
+use conchy_ipc::WindowLayout;
 use conchy_wm_config::utils::MergeWith as _;
 use conchy_wm_config::{Color, CornerRadius, GradientInterpolation};
-use conchy_ipc::WindowLayout;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::{Element, Kind, RenderElement};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
@@ -476,7 +476,10 @@ impl<W: LayoutElement> Tile<W> {
 
     pub fn are_animations_ongoing(&self) -> bool {
         self.are_transitions_ongoing()
-            || self.dim_animation.as_ref().is_some_and(|dim| !dim.anim.is_done())
+            || self
+                .dim_animation
+                .as_ref()
+                .is_some_and(|dim| !dim.anim.is_done())
             || self.window.rules().baba_is_float == Some(true)
     }
 
@@ -710,7 +713,11 @@ impl<W: LayoutElement> Tile<W> {
         self.animate_move_x_from_with_config(from, self.options.animations.window_movement.0);
     }
 
-    pub fn animate_move_x_from_with_config(&mut self, from: f64, config: conchy_wm_config::Animation) {
+    pub fn animate_move_x_from_with_config(
+        &mut self,
+        from: f64,
+        config: conchy_wm_config::Animation,
+    ) {
         let current_offset = self.render_offset().x;
 
         // Preserve the previous config if ongoing.
@@ -734,7 +741,11 @@ impl<W: LayoutElement> Tile<W> {
         self.animate_move_y_from_with_config(from, self.options.animations.window_movement.0);
     }
 
-    pub fn animate_move_y_from_with_config(&mut self, from: f64, config: conchy_wm_config::Animation) {
+    pub fn animate_move_y_from_with_config(
+        &mut self,
+        from: f64,
+        config: conchy_wm_config::Animation,
+    ) {
         let current_offset = self.render_offset().y;
 
         // Preserve the previous config if ongoing.

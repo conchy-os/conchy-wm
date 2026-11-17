@@ -4,11 +4,11 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitflags::bitflags;
-use knuffel::errors::DecodeError;
-use miette::miette;
 use conchy_ipc::{
     ColumnDisplay, LayoutSwitchTarget, PositionChange, SizeChange, WorkspaceReferenceArg,
 };
+use knuffel::errors::DecodeError;
+use miette::miette;
 use smithay::input::keyboard::keysyms::KEY_NoSymbol;
 use smithay::input::keyboard::xkb::{keysym_from_name, KEYSYM_CASE_INSENSITIVE, KEYSYM_NO_FLAGS};
 use smithay::input::keyboard::Keysym;
@@ -27,6 +27,8 @@ pub struct Bind {
     pub cooldown: Option<Duration>,
     pub allow_when_locked: bool,
     pub allow_inhibiting: bool,
+    /// Whether the bind still fires while the focused window is fullscreen.
+    pub allow_when_fullscreen: bool,
     pub hotkey_overlay_title: Option<Option<String>>,
 }
 
@@ -39,6 +41,9 @@ pub struct Key {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Trigger {
     Keysym(Keysym),
+    /// A modifier pressed and released on its own, with nothing else in between: `Super`.
+    /// The modifier itself is in [`Key::modifiers`].
+    ModifierTap,
     MouseLeft,
     MouseRight,
     MouseMiddle,
@@ -412,7 +417,9 @@ impl From<conchy_ipc::Action> for Action {
             conchy_ipc::Action::PowerOnMonitors {} => Self::PowerOnMonitors,
             conchy_ipc::Action::Spawn { command } => Self::Spawn(command),
             conchy_ipc::Action::SpawnSh { command } => Self::SpawnSh(command),
-            conchy_ipc::Action::DoScreenTransition { delay_ms } => Self::DoScreenTransition(delay_ms),
+            conchy_ipc::Action::DoScreenTransition { delay_ms } => {
+                Self::DoScreenTransition(delay_ms)
+            }
             conchy_ipc::Action::Screenshot { show_pointer, path } => {
                 Self::Screenshot(show_pointer, path)
             }
@@ -468,7 +475,9 @@ impl From<conchy_ipc::Action> for Action {
             conchy_ipc::Action::FocusWindowDown {} => Self::FocusWindowDown,
             conchy_ipc::Action::FocusWindowUp {} => Self::FocusWindowUp,
             conchy_ipc::Action::FocusWindowDownOrColumnLeft {} => Self::FocusWindowDownOrColumnLeft,
-            conchy_ipc::Action::FocusWindowDownOrColumnRight {} => Self::FocusWindowDownOrColumnRight,
+            conchy_ipc::Action::FocusWindowDownOrColumnRight {} => {
+                Self::FocusWindowDownOrColumnRight
+            }
             conchy_ipc::Action::FocusWindowUpOrColumnLeft {} => Self::FocusWindowUpOrColumnLeft,
             conchy_ipc::Action::FocusWindowUpOrColumnRight {} => Self::FocusWindowUpOrColumnRight,
             conchy_ipc::Action::FocusWindowOrWorkspaceDown {} => Self::FocusWindowOrWorkspaceDown,
@@ -600,16 +609,22 @@ impl From<conchy_ipc::Action> for Action {
                 id: Some(id),
                 change,
             } => Self::SetWindowWidthById { id, change },
-            conchy_ipc::Action::SetWindowHeight { id: None, change } => Self::SetWindowHeight(change),
+            conchy_ipc::Action::SetWindowHeight { id: None, change } => {
+                Self::SetWindowHeight(change)
+            }
             conchy_ipc::Action::SetWindowHeight {
                 id: Some(id),
                 change,
             } => Self::SetWindowHeightById { id, change },
             conchy_ipc::Action::ResetWindowHeight { id: None } => Self::ResetWindowHeight,
-            conchy_ipc::Action::ResetWindowHeight { id: Some(id) } => Self::ResetWindowHeightById(id),
+            conchy_ipc::Action::ResetWindowHeight { id: Some(id) } => {
+                Self::ResetWindowHeightById(id)
+            }
             conchy_ipc::Action::SwitchPresetColumnWidth {} => Self::SwitchPresetColumnWidth,
             conchy_ipc::Action::SwitchPresetColumnWidthBack {} => Self::SwitchPresetColumnWidthBack,
-            conchy_ipc::Action::SwitchPresetWindowWidth { id: None } => Self::SwitchPresetWindowWidth,
+            conchy_ipc::Action::SwitchPresetWindowWidth { id: None } => {
+                Self::SwitchPresetWindowWidth
+            }
             conchy_ipc::Action::SwitchPresetWindowWidthBack { id: None } => {
                 Self::SwitchPresetWindowWidthBack
             }
@@ -637,7 +652,9 @@ impl From<conchy_ipc::Action> for Action {
                 Self::MaximizeWindowToEdgesById(id)
             }
             conchy_ipc::Action::SetColumnWidth { change } => Self::SetColumnWidth(change),
-            conchy_ipc::Action::ExpandColumnToAvailableWidth {} => Self::ExpandColumnToAvailableWidth,
+            conchy_ipc::Action::ExpandColumnToAvailableWidth {} => {
+                Self::ExpandColumnToAvailableWidth
+            }
             conchy_ipc::Action::SwitchLayout { layout } => Self::SwitchLayout(layout),
             conchy_ipc::Action::ShowHotkeyOverlay {} => Self::ShowHotkeyOverlay,
             conchy_ipc::Action::MoveWorkspaceToMonitorLeft {} => Self::MoveWorkspaceToMonitorLeft,
@@ -701,7 +718,9 @@ impl From<conchy_ipc::Action> for Action {
             conchy_ipc::Action::MoveFloatingWindow { id, x, y } => {
                 Self::MoveFloatingWindowById { id, x, y }
             }
-            conchy_ipc::Action::ToggleWindowRuleOpacity { id: None } => Self::ToggleWindowRuleOpacity,
+            conchy_ipc::Action::ToggleWindowRuleOpacity { id: None } => {
+                Self::ToggleWindowRuleOpacity
+            }
             conchy_ipc::Action::ToggleWindowRuleOpacity { id: Some(id) } => {
                 Self::ToggleWindowRuleOpacityById(id)
             }
@@ -863,6 +882,7 @@ where
         let mut allow_when_locked = false;
         let mut allow_when_locked_node = None;
         let mut allow_inhibiting = true;
+        let mut allow_when_fullscreen = true;
         let mut hotkey_overlay_title = None;
         for (name, val) in &node.properties {
             match &***name {
@@ -880,6 +900,9 @@ where
                 }
                 "allow-inhibiting" => {
                     allow_inhibiting = knuffel::traits::DecodeScalar::decode(val, ctx)?;
+                }
+                "allow-when-fullscreen" => {
+                    allow_when_fullscreen = knuffel::traits::DecodeScalar::decode(val, ctx)?;
                 }
                 "hotkey-overlay-title" => {
                     hotkey_overlay_title = Some(knuffel::traits::DecodeScalar::decode(val, ctx)?);
@@ -906,6 +929,7 @@ where
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            allow_when_fullscreen: true,
             hotkey_overlay_title: None,
         };
 
@@ -942,6 +966,7 @@ where
                         cooldown,
                         allow_when_locked,
                         allow_inhibiting,
+                        allow_when_fullscreen,
                         hotkey_overlay_title,
                     })
                 }
@@ -960,11 +985,42 @@ where
     }
 }
 
+/// Parses `Super`, `Mod`, `Ctrl+Alt` and the like: every part is a modifier name.
+fn parse_modifier_chord(s: &str) -> Option<Modifiers> {
+    let mut modifiers = Modifiers::empty();
+    for part in s.split('+') {
+        let part = part.trim();
+        modifiers |= if part.eq_ignore_ascii_case("mod") {
+            Modifiers::COMPOSITOR
+        } else if part.eq_ignore_ascii_case("ctrl") || part.eq_ignore_ascii_case("control") {
+            Modifiers::CTRL
+        } else if part.eq_ignore_ascii_case("shift") {
+            Modifiers::SHIFT
+        } else if part.eq_ignore_ascii_case("alt") {
+            Modifiers::ALT
+        } else if part.eq_ignore_ascii_case("super") || part.eq_ignore_ascii_case("win") {
+            Modifiers::SUPER
+        } else {
+            return None;
+        };
+    }
+    (!modifiers.is_empty()).then_some(modifiers)
+}
+
 impl FromStr for Key {
     type Err = miette::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut modifiers = Modifiers::empty();
+
+        // A lone modifier (`Super`, `Mod`, `Ctrl+Alt`) is a tap: pressed and released
+        // on its own.
+        if let Some(tap) = parse_modifier_chord(s) {
+            return Ok(Key {
+                trigger: Trigger::ModifierTap,
+                modifiers: tap,
+            });
+        }
 
         let mut split = s.split('+');
         let key = split.next_back().unwrap();
@@ -1068,6 +1124,31 @@ impl FromStr for Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_modifier_tap() {
+        let key: Key = "Super".parse().unwrap();
+        assert_eq!(key.trigger, Trigger::ModifierTap);
+        assert_eq!(key.modifiers, Modifiers::SUPER);
+
+        let key: Key = "Mod".parse().unwrap();
+        assert_eq!(key.trigger, Trigger::ModifierTap);
+        assert_eq!(key.modifiers, Modifiers::COMPOSITOR);
+
+        let key: Key = "Ctrl+Alt".parse().unwrap();
+        assert_eq!(key.trigger, Trigger::ModifierTap);
+        assert_eq!(key.modifiers, Modifiers::CTRL | Modifiers::ALT);
+
+        // A modifier followed by a real key is still an ordinary bind.
+        let key: Key = "Super+Q".parse().unwrap();
+        assert_eq!(key.trigger, Trigger::Keysym(Keysym::q));
+        assert_eq!(key.modifiers, Modifiers::SUPER);
+
+        assert!("Super_L"
+            .parse::<Key>()
+            .is_ok_and(|k| k.trigger != Trigger::ModifierTap));
+        assert!("Hyper+".parse::<Key>().is_err());
+    }
 
     #[test]
     fn parse_xf86_screensaver() {

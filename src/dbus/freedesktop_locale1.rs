@@ -1,5 +1,5 @@
-use futures_util::StreamExt;
 use conchy_wm_config::Xkb;
+use futures_util::StreamExt;
 use zbus::names::InterfaceName;
 use zbus::{fdo, zvariant};
 

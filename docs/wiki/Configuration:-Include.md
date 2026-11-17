@@ -298,3 +298,12 @@ layout {
 The reason for this special case is that this is how it historically worked: back when I added borders, we didn't have any `on` flags, so I made writing the `border {}` section enable the border, with an explicit `off` to disable it.
 It wouldn't be too problematic to change it, however the default config always had a pre-filled `layout { border { off; } }` section with a note saying that commenting out the `off` is enough to enable the border.
 Many people likely have this part of the default config embedded in their configs now, so changing how it works would just cause a lot of confusion.
+
+### `shortcuts.kdl`
+
+Next to the main config, `shortcuts.kdl` is loaded as an implicit last include, if it exists.
+It is written by `conchy-shell` (Settings, Shortcuts), but it is an ordinary config file.
+
+Unlike other includes, a `binds` block in `shortcuts.kdl` *replaces* the binds from the main config instead of merging with them.
+This lets the editor remove a bind by leaving it out.
+The shell copies the binds of `wm.kdl` into `shortcuts.kdl` the first time you change one.

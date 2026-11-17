@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::iter::zip;
 use std::mem;
 
-use conchy_wm_config::{FloatOrInt, OutputName, Vrr};
 use conchy_ipc::Transform;
+use conchy_wm_config::{FloatOrInt, OutputName, Vrr};
 use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::{
     zwlr_output_configuration_head_v1, zwlr_output_configuration_v1, zwlr_output_head_v1,
     zwlr_output_manager_v1, zwlr_output_mode_v1,

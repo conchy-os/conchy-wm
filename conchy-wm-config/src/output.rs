@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
+use conchy_ipc::{ConfiguredMode, HSyncPolarity, Transform, VSyncPolarity};
 use knuffel::ast::SpannedNode;
 use knuffel::decode::Context;
 use knuffel::errors::DecodeError;
 use knuffel::traits::ErrorSpan;
 use knuffel::Decode;
-use conchy_ipc::{ConfiguredMode, HSyncPolarity, Transform, VSyncPolarity};
 
 use crate::gestures::HotCorners;
 use crate::{Color, FloatOrInt, LayoutPart};

@@ -12,9 +12,9 @@ use std::{f64, fmt};
 
 use anyhow::{ensure, Context};
 use bitflags::bitflags;
+use conchy_wm_config::{Config, OutputName};
 use directories::UserDirs;
 use git_version::git_version;
-use conchy_wm_config::{Config, OutputName};
 use smithay::backend::renderer::utils::{
     with_renderer_surface_state, RendererSurfaceStateUserData,
 };

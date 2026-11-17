@@ -13,11 +13,11 @@ use std::{io, mem};
 
 use anyhow::{anyhow, bail, ensure, Context};
 use bytemuck::cast_slice_mut;
-use drm_ffi::drm_mode_modeinfo;
-use libc::dev_t;
+use conchy_ipc::{HSyncPolarity, VSyncPolarity};
 use conchy_wm_config::output::{HdrMode, Modeline};
 use conchy_wm_config::{Config, OutputName};
-use conchy_ipc::{HSyncPolarity, VSyncPolarity};
+use drm_ffi::drm_mode_modeinfo;
+use libc::dev_t;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
@@ -4529,9 +4529,9 @@ unsafe fn init_libinput_plugin_system(libinput: &Libinput) {
 
 #[cfg(test)]
 mod tests {
-    use insta::assert_debug_snapshot;
-    use conchy_wm_config::output::Modeline;
     use conchy_ipc::{HSyncPolarity, VSyncPolarity};
+    use conchy_wm_config::output::Modeline;
+    use insta::assert_debug_snapshot;
 
     use smithay::wayland::color::management::ImageDescription;
 

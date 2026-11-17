@@ -4,11 +4,11 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use calloop::timer::{TimeoutAction, Timer};
-use input::event::gesture::GestureEventCoordinates as _;
+use conchy_ipc::LayoutSwitchTarget;
 use conchy_wm_config::{
     Action, Bind, Binds, Config, Key, ModKey, Modifiers, MruDirection, SwitchBinds, Trigger,
 };
-use conchy_ipc::LayoutSwitchTarget;
+use input::event::gesture::GestureEventCoordinates as _;
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, DeviceCapability, Event,
     GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
@@ -18,6 +18,7 @@ use smithay::backend::input::{
     TabletToolTipState, TouchEvent,
 };
 use smithay::backend::libinput::LibinputInputBackend;
+use smithay::desktop::Window;
 use smithay::input::dnd::DnDGrab;
 use smithay::input::keyboard::{keysyms, FilterResult, Keysym, Layout, ModifiersState};
 use smithay::input::pointer::{
@@ -32,7 +33,6 @@ use smithay::input::touch::{
     DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, UpEvent,
 };
 use smithay::input::{tablet, SeatHandler};
-use smithay::desktop::Window;
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -454,6 +454,16 @@ impl State {
             .is_some_and(KeyboardShortcutsInhibitor::is_active)
     }
 
+    /// Whether keyboard focus is on a fullscreen window.
+    fn is_focus_fullscreen(&self) -> bool {
+        self.niri.keyboard_focus.is_layout()
+            && self
+                .niri
+                .layout
+                .focus()
+                .is_some_and(|window| window.is_fullscreen())
+    }
+
     fn on_keyboard<I: InputBackend>(
         &mut self,
         event: I::KeyboardKeyEvent,
@@ -483,6 +493,7 @@ impl State {
         }
 
         let is_inhibiting_shortcuts = self.is_inhibiting_shortcuts();
+        let is_focus_fullscreen = self.is_focus_fullscreen();
 
         // Accessibility modifier grabs should override XKB state changes (e.g. Caps Lock), so we
         // need to process them before keyboard.input() below.
@@ -595,10 +606,26 @@ impl State {
                     }
                 }
 
+                // A modifier pressed and released on its own is a tap: `Super { ... }`.
+                if let Some(bind) = this.track_modifier_tap(
+                    pressed,
+                    modified,
+                    modifiers,
+                    mod_key,
+                    is_inhibiting_shortcuts,
+                    is_focus_fullscreen,
+                ) {
+                    this.handle_bind(bind);
+                    // The release still goes to the client, or it would think the modifier is
+                    // stuck down.
+                    return FilterResult::Forward;
+                }
+
                 let res = {
                     let config = this.niri.config.borrow();
                     let bindings =
-                        make_binds_iter(&config, &mut this.niri.window_mru_ui, modifiers);
+                        make_binds_iter(&config, &mut this.niri.window_mru_ui, modifiers)
+                            .filter(|bind| bind.allow_when_fullscreen || !is_focus_fullscreen);
 
                     should_intercept_key(
                         &mut this.niri.suppressed_keys,
@@ -642,6 +669,56 @@ impl State {
         self.handle_bind(bind.clone());
 
         self.start_key_repeat(bind);
+    }
+
+    /// Follows a modifier through press and release, returning the tap bind to run when it
+    /// is released without anything else having been pressed.
+    ///
+    /// `modifiers` is the state after this event.
+    fn track_modifier_tap(
+        &mut self,
+        pressed: bool,
+        key: Keysym,
+        modifiers: Modifiers,
+        mod_key: ModKey,
+        is_inhibiting_shortcuts: bool,
+        is_focus_fullscreen: bool,
+    ) -> Option<Bind> {
+        let Some(key_modifier) = modifier_of_keysym(key) else {
+            // Any other key ends a tap, but its release changes nothing.
+            if pressed {
+                self.niri.modifier_tap = None;
+            }
+            return None;
+        };
+
+        if pressed {
+            self.niri.modifier_tap = match self.niri.modifier_tap {
+                // A second modifier joins a chord like Ctrl+Alt.
+                Some(tap) => Some(tap | key_modifier),
+                // A tap starts only from a clean slate: no other modifier already down.
+                None if modifiers == key_modifier => Some(key_modifier),
+                None => None,
+            };
+            return None;
+        }
+
+        let tap = self.niri.modifier_tap.take()?;
+        if self.niri.window_mru_ui.is_open() || self.niri.exit_confirm_dialog.is_open() {
+            return None;
+        }
+
+        let config = self.niri.config.borrow();
+        let bind = find_modifier_tap_bind(&config.binds.0, mod_key, tap)?;
+        drop(config);
+
+        if is_inhibiting_shortcuts && bind.allow_inhibiting {
+            return None;
+        }
+        if is_focus_fullscreen && !bind.allow_when_fullscreen {
+            return None;
+        }
+        Some(bind)
     }
 
     fn start_key_repeat(&mut self, bind: Bind) {
@@ -813,7 +890,10 @@ impl State {
             Action::ScreenshotTogglePointer => {}
             Action::Screenshot(_show_cursor, _path) => {
                 let (token, _) = self.niri.activation_state.create_external_token(None);
-                spawn_sh("flameshot gui || grim -g \"$(slurp)\" - | wl-copy".to_string(), Some(token.clone()));
+                spawn_sh(
+                    "flameshot gui || grim -g \"$(slurp)\" - | wl-copy".to_string(),
+                    Some(token.clone()),
+                );
                 self.niri.cancel_mru();
             }
             Action::ScreenshotWindow(write_to_disk, show_pointer, path) => {
@@ -2741,6 +2821,9 @@ impl State {
         let mod_down = modifiers.contains(mod_key.to_modifiers());
 
         if ButtonState::Pressed == button_state {
+            // Super+click, Super+drag: the modifier was used, not tapped.
+            self.niri.modifier_tap = None;
+
             // Clicking a minimized window's thumbnail restores it. Handle this before anything
             // else so the strip stays clickable even when it overlaps a window.
             if let Some(MouseButton::Left) = button {
@@ -3048,6 +3131,9 @@ impl State {
 
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
 
+        // Super+scroll uses the modifier too.
+        self.niri.modifier_tap = None;
+
         // We received an event for the regular pointer, so show it now. This is also needed for
         // update_pointer_contents() below to return the real contents, necessary for the pointer
         // axis event to reach the window.
@@ -3118,6 +3204,7 @@ impl State {
                             cooldown: None,
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            allow_when_fullscreen: true,
                             hotkey_overlay_title: None,
                         });
                         let bind_right = Some(Bind {
@@ -3135,27 +3222,28 @@ impl State {
                             cooldown: None,
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            allow_when_fullscreen: true,
                             hotkey_overlay_title: None,
                         });
                         (bind_left, bind_right)
                     } else {
-                            let config = self.niri.config.borrow();
-                            let bindings =
-                                make_binds_iter(&config, &mut self.niri.window_mru_ui, modifiers);
-                            let bind_left = find_configured_bind(
-                                bindings.clone(),
-                                mod_key,
-                                Trigger::WheelScrollLeft,
-                                mods,
-                            );
-                            let bind_right = find_configured_bind(
-                                bindings,
-                                mod_key,
-                                Trigger::WheelScrollRight,
-                                mods,
-                            );
-                            (bind_left, bind_right)
-                        };
+                        let config = self.niri.config.borrow();
+                        let bindings =
+                            make_binds_iter(&config, &mut self.niri.window_mru_ui, modifiers);
+                        let bind_left = find_configured_bind(
+                            bindings.clone(),
+                            mod_key,
+                            Trigger::WheelScrollLeft,
+                            mods,
+                        );
+                        let bind_right = find_configured_bind(
+                            bindings,
+                            mod_key,
+                            Trigger::WheelScrollRight,
+                            mods,
+                        );
+                        (bind_left, bind_right)
+                    };
 
                     if let Some(right) = bind_right {
                         for _ in 0..ticks {
@@ -3190,6 +3278,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            allow_when_fullscreen: true,
                             hotkey_overlay_title: None,
                         });
                         let bind_down = Some(Bind {
@@ -3207,6 +3296,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            allow_when_fullscreen: true,
                             hotkey_overlay_title: None,
                         });
                         (bind_up, bind_down)
@@ -3296,10 +3386,11 @@ impl State {
                             }
                         }
 
-                        let res = self
-                            .niri
-                            .layout
-                            .workspace_switch_gesture_update(workspace_delta, timestamp, true);
+                        let res = self.niri.layout.workspace_switch_gesture_update(
+                            workspace_delta,
+                            timestamp,
+                            true,
+                        );
                         if let Some(Some(_)) = res {
                             redraw = true;
                         }
@@ -3934,10 +4025,10 @@ impl State {
             axis_policy.split_view_workspace_deltas(delta_x, delta_y);
 
         let mut handled = false;
-        let res = self
-            .niri
-            .layout
-            .workspace_switch_gesture_update(workspace_delta, timestamp, true);
+        let res =
+            self.niri
+                .layout
+                .workspace_switch_gesture_update(workspace_delta, timestamp, true);
         if let Some(output) = res {
             if let Some(output) = output {
                 self.niri.queue_redraw(&output);
@@ -4462,6 +4553,7 @@ fn find_bind<'a>(
             // It also makes no sense to inhibit the default power key handling.
             // Hardcoded binds must never be inhibited.
             allow_inhibiting: false,
+            allow_when_fullscreen: true,
             hotkey_overlay_title: None,
         });
     }
@@ -4502,6 +4594,45 @@ fn find_configured_bind<'a>(
     }
 
     None
+}
+
+/// The modifier a modifier key (`Super_L`, `Control_R`, ...) stands for.
+fn modifier_of_keysym(key: Keysym) -> Option<Modifiers> {
+    match key {
+        Keysym::Super_L | Keysym::Super_R => Some(Modifiers::SUPER),
+        Keysym::Control_L | Keysym::Control_R => Some(Modifiers::CTRL),
+        Keysym::Shift_L | Keysym::Shift_R => Some(Modifiers::SHIFT),
+        Keysym::Alt_L | Keysym::Alt_R => Some(Modifiers::ALT),
+        Keysym::ISO_Level3_Shift => Some(Modifiers::ISO_LEVEL3_SHIFT),
+        Keysym::ISO_Level5_Shift => Some(Modifiers::ISO_LEVEL5_SHIFT),
+        _ => None,
+    }
+}
+
+fn find_modifier_tap_bind<'a>(
+    bindings: impl IntoIterator<Item = &'a Bind>,
+    mod_key: ModKey,
+    mut tapped: Modifiers,
+) -> Option<Bind> {
+    // `Mod` is a stand-in for whichever modifier is the compositor one.
+    if tapped.contains(mod_key.to_modifiers()) {
+        tapped |= Modifiers::COMPOSITOR;
+    }
+
+    bindings.into_iter().find_map(|bind| {
+        if bind.key.trigger != Trigger::ModifierTap {
+            return None;
+        }
+
+        let mut bind_modifiers = bind.key.modifiers;
+        if bind_modifiers.contains(Modifiers::COMPOSITOR) {
+            bind_modifiers |= mod_key.to_modifiers();
+        } else if bind_modifiers.contains(mod_key.to_modifiers()) {
+            bind_modifiers |= Modifiers::COMPOSITOR;
+        }
+
+        (bind_modifiers == tapped).then(|| bind.clone())
+    })
 }
 
 fn find_configured_switch_action(
@@ -4644,6 +4775,7 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
         cooldown: None,
         allow_when_locked: false,
         allow_inhibiting: false,
+        allow_when_fullscreen: true,
         hotkey_overlay_title: None,
     })
 }
@@ -5076,6 +5208,7 @@ mod tests {
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            allow_when_fullscreen: true,
             hotkey_overlay_title: None,
         }]);
 
@@ -5259,6 +5392,7 @@ mod tests {
                 cooldown: None,
                 allow_when_locked: false,
                 allow_inhibiting: true,
+                allow_when_fullscreen: true,
                 hotkey_overlay_title: None,
             },
             Bind {
@@ -5271,6 +5405,7 @@ mod tests {
                 cooldown: None,
                 allow_when_locked: false,
                 allow_inhibiting: true,
+                allow_when_fullscreen: true,
                 hotkey_overlay_title: None,
             },
             Bind {
@@ -5283,6 +5418,7 @@ mod tests {
                 cooldown: None,
                 allow_when_locked: false,
                 allow_inhibiting: true,
+                allow_when_fullscreen: true,
                 hotkey_overlay_title: None,
             },
             Bind {
@@ -5295,6 +5431,7 @@ mod tests {
                 cooldown: None,
                 allow_when_locked: false,
                 allow_inhibiting: true,
+                allow_when_fullscreen: true,
                 hotkey_overlay_title: None,
             },
             Bind {
@@ -5307,6 +5444,7 @@ mod tests {
                 cooldown: None,
                 allow_when_locked: false,
                 allow_inhibiting: true,
+                allow_when_fullscreen: true,
                 hotkey_overlay_title: None,
             },
         ]);
@@ -5429,5 +5567,61 @@ mod tests {
             ),
             None,
         );
+    }
+
+    fn tap_bind(modifiers: Modifiers, action: Action) -> Bind {
+        Bind {
+            key: Key {
+                trigger: Trigger::ModifierTap,
+                modifiers,
+            },
+            action,
+            repeat: false,
+            cooldown: None,
+            allow_when_locked: false,
+            allow_inhibiting: false,
+            allow_when_fullscreen: true,
+            hotkey_overlay_title: None,
+        }
+    }
+
+    #[test]
+    fn modifier_tap_lookup() {
+        let binds = vec![
+            tap_bind(Modifiers::SUPER, Action::Spawn(vec!["launcher".into()])),
+            tap_bind(Modifiers::CTRL | Modifiers::ALT, Action::CloseWindow),
+            // An ordinary bind on the same modifiers is never a tap.
+            Bind {
+                key: Key {
+                    trigger: Trigger::Keysym(Keysym::q),
+                    modifiers: Modifiers::SUPER,
+                },
+                ..tap_bind(Modifiers::SUPER, Action::CloseWindow)
+            },
+        ];
+
+        let found = find_modifier_tap_bind(&binds, ModKey::Super, Modifiers::SUPER);
+        assert_eq!(found.as_ref(), Some(&binds[0]));
+
+        // A chord is its own tap.
+        let found = find_modifier_tap_bind(&binds, ModKey::Super, Modifiers::CTRL | Modifiers::ALT);
+        assert_eq!(found.as_ref(), Some(&binds[1]));
+        assert!(find_modifier_tap_bind(&binds, ModKey::Super, Modifiers::CTRL).is_none());
+        assert!(find_modifier_tap_bind(&binds, ModKey::Super, Modifiers::SHIFT).is_none());
+
+        // `Mod` follows the compositor modifier.
+        let mod_binds = vec![tap_bind(Modifiers::COMPOSITOR, Action::CloseWindow)];
+        assert!(find_modifier_tap_bind(&mod_binds, ModKey::Super, Modifiers::SUPER).is_some());
+        assert!(find_modifier_tap_bind(&mod_binds, ModKey::Alt, Modifiers::SUPER).is_none());
+        assert!(find_modifier_tap_bind(&mod_binds, ModKey::Alt, Modifiers::ALT).is_some());
+    }
+
+    #[test]
+    fn modifier_keysyms() {
+        assert_eq!(modifier_of_keysym(Keysym::Super_L), Some(Modifiers::SUPER));
+        assert_eq!(modifier_of_keysym(Keysym::Super_R), Some(Modifiers::SUPER));
+        assert_eq!(modifier_of_keysym(Keysym::Control_R), Some(Modifiers::CTRL));
+        assert_eq!(modifier_of_keysym(Keysym::q), None);
+        assert_eq!(modifier_of_keysym(Keysym::Escape), None);
     }
 }

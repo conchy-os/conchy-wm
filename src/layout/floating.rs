@@ -2,9 +2,9 @@ use std::cmp::max;
 use std::iter::zip;
 use std::rc::Rc;
 
+use conchy_ipc::{PositionChange, SizeChange, WindowLayout};
 use conchy_wm_config::utils::MergeWith as _;
 use conchy_wm_config::{PresetSize, RelativeTo};
-use conchy_ipc::{PositionChange, SizeChange, WindowLayout};
 use smithay::backend::renderer::element::RenderElement;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 

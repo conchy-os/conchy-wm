@@ -11,15 +11,15 @@ use anyhow::Context;
 use async_channel::{Receiver, Sender, TrySendError};
 use calloop::futures::Scheduler;
 use calloop::io::Async;
-use directories::BaseDirs;
-use futures_util::io::{AsyncReadExt, BufReader};
-use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, FutureExt as _};
-use conchy_wm_config::OutputName;
 use conchy_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use conchy_ipc::{
     Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
     Timestamp, WindowLayout, Workspace,
 };
+use conchy_wm_config::OutputName;
+use directories::BaseDirs;
+use futures_util::io::{AsyncReadExt, BufReader};
+use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, FutureExt as _};
 use smithay::desktop::layer_map_for_output;
 use smithay::input::pointer::{
     CursorIcon, CursorImageStatus, Focus, GrabStartData as PointerGrabStartData,

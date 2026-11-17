@@ -1,7 +1,7 @@
 use std::fmt::{self, Write as _};
 
-use insta::assert_snapshot;
 use conchy_wm_config::Config;
+use insta::assert_snapshot;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use super::*;

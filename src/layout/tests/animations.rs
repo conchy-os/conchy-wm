@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
-use insta::assert_snapshot;
 use conchy_wm_config::animations::{Curve, EasingParams, Kind};
+use insta::assert_snapshot;
 
 use super::*;
 

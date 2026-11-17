@@ -187,8 +187,8 @@ use crate::render_helpers::surface::push_elements_from_surface_tree;
 use crate::render_helpers::texture::{TextureBuffer, UniversalTextureRenderElement};
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::{
-    encompassing_geo, render_to_dmabuf, render_to_shm,
-    render_to_texture, render_to_vec, shaders, RenderCtx, RenderTarget,
+    encompassing_geo, render_to_dmabuf, render_to_shm, render_to_texture, render_to_vec, shaders,
+    RenderCtx, RenderTarget,
 };
 #[cfg(feature = "xdp-gnome-screencast")]
 use crate::screencasting::Screencasting;
@@ -372,6 +372,9 @@ pub struct Niri {
     pub suppressed_keys: HashSet<Keycode>,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
+    /// Modifiers held down on their own since the last key or pointer input, waiting to be
+    /// released for a `Super { ... }` style bind.
+    pub modifier_tap: Option<Modifiers>,
     pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
     pub bind_repeat_timer: Option<RegistrationToken>,
     // Timer waking up the event loop at the vblank where the earliest pending commit-timer
@@ -2275,10 +2278,12 @@ impl State {
             conchy_ipc::OutputAction::Position { position } => {
                 config.position = match position {
                     conchy_ipc::PositionToSet::Automatic => None,
-                    conchy_ipc::PositionToSet::Specific(position) => Some(conchy_wm_config::Position {
-                        x: position.x,
-                        y: position.y,
-                    }),
+                    conchy_ipc::PositionToSet::Specific(position) => {
+                        Some(conchy_wm_config::Position {
+                            x: position.x,
+                            y: position.y,
+                        })
+                    }
                 }
             }
             conchy_ipc::OutputAction::Vrr { vrr } => {
@@ -2321,7 +2326,10 @@ impl State {
         self.niri.output_management_state.notify_changes(new_config);
     }
 
-    pub fn handle_pick_color(&mut self, tx: async_channel::Sender<Option<conchy_ipc::PickedColor>>) {
+    pub fn handle_pick_color(
+        &mut self,
+        tx: async_channel::Sender<Option<conchy_ipc::PickedColor>>,
+    ) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         let start_data = PointerGrabStartData {
             focus: None,
@@ -3193,6 +3201,7 @@ impl Niri {
             popup_grab: None,
             suppressed_keys: HashSet::new(),
             suppressed_buttons: HashSet::new(),
+            modifier_tap: None,
             bind_cooldown_timers: HashMap::new(),
             bind_repeat_timer: Option::default(),
             commit_timing_wakeup_timer: None,
@@ -3872,10 +3881,7 @@ impl Niri {
     /// The cursor may be inside the window's activation region, but not within the window's input
     /// region.
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<&Mapped> {
-        if self.exit_confirm_dialog.is_open()
-            || self.is_locked()
-            || self.window_mru_ui.is_open()
-        {
+        if self.exit_confirm_dialog.is_open() || self.is_locked() || self.window_mru_ui.is_open() {
             return None;
         }
 

@@ -1,8 +1,8 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::time::Duration;
 
-use niri::render_helpers::border::BorderRenderElement;
 use conchy_wm_config::{Color, CornerRadius, GradientInterpolation};
+use niri::render_helpers::border::BorderRenderElement;
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Physical, Point, Rectangle, Size};

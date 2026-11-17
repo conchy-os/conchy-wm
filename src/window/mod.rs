@@ -1,12 +1,12 @@
 use std::cmp::{max, min};
 
+use conchy_ipc::ColumnDisplay;
 use conchy_wm_config::utils::MergeWith as _;
 use conchy_wm_config::window_rule::{Match, OnXdgActivate, WindowRule};
 use conchy_wm_config::{
     BackgroundEffect, BlockOutFrom, BorderRule, CornerRadius, FloatingPosition, PresetSize,
     ResolvedPopupsRules, ShadowRule, TabIndicatorRule,
 };
-use conchy_ipc::ColumnDisplay;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Size};
 use smithay::wayland::compositor::with_states;

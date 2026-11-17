@@ -1,10 +1,10 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use insta::assert_snapshot;
+use conchy_ipc::SizeChange;
 use conchy_wm_config::animations::{Curve, EasingParams, Kind};
 use conchy_wm_config::Config;
-use conchy_ipc::SizeChange;
+use insta::assert_snapshot;
 use smithay::utils::{Point, Size};
 use wayland_client::protocol::wl_surface::WlSurface;
 
