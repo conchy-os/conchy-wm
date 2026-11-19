@@ -344,6 +344,21 @@ window-rule {
     open-floating true
 }
 
+// Диалог выбора файла портала (xdg-desktop-portal-conchy → conchy-files): плавающий, по центру.
+window-rule {
+    match app-id=r#"^conchy-files-picker$"#
+    open-floating true
+    default-column-width { fixed 900; }
+    default-window-height { fixed 600; }
+}
+
+// Невидимое окно-якорь резидентного conchy-files (`conchy-files --resident`).
+window-rule {
+    match app-id=r#"^conchy-files-keepalive$"#
+    open-floating true
+    open-focused false
+}
+
 // Example: block out two password managers from screen capture.
 // (This example rule is commented out with a "/-" in front.)
 /-window-rule {
