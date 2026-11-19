@@ -352,6 +352,12 @@ window-rule {
     default-window-height { fixed 600; }
 }
 
+// Выбор приложения («Открыть с помощью») из портала AppChooser.
+window-rule {
+    match app-id=r#"^conchy-files-appchooser$"#
+    open-floating true
+}
+
 // Невидимое окно-якорь резидентного conchy-files (`conchy-files --resident`).
 window-rule {
     match app-id=r#"^conchy-files-keepalive$"#
